@@ -14,12 +14,7 @@
  * limitations under the License.
  */
 
-import com.google.common.collect.Lists;
-
-import java.io.BufferedOutputStream;
 import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,11 +23,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public class CombineResults {
+
+  final int NUM_POINTS_1 = 7;
+  final int NUM_POINTS = 8;
 
   enum Clients{
     C100("100"),
@@ -111,9 +111,8 @@ public class CombineResults {
       }
       return String.valueOf(res);
     }
+
   }
-
-
 
   private class HDFSInotifyResultsSet{
     ResultSet inotify_1k;
@@ -156,17 +155,10 @@ public class CombineResults {
               (clients)));
     }
 
-
-    String getResult1K(Clients clients, int second){
-      return inotify_1k.getResult(clients, second);
-    }
-
-    String getResult10K(Clients clients, int second){
-      return inotify_10k.getResult(clients, second);
-    }
-
-    String getResult100K(Clients clients, int second){
-      return inotify_100k.getResult(clients, second);
+    String getResult(Clients clients, int second){
+      return inotify_1k.getResult(clients, second) + " " + inotify_10k
+          .getResult(clients, second) + " " + inotify_100k.getResult(clients,
+          second);
     }
 
   }
@@ -192,24 +184,47 @@ public class CombineResults {
       HDFSInotifyResultsSet hdfsInotifyResultsSet, Clients clients)
       throws IOException {
     int max = epipeResults.getMaxSeconds(clients);
+    int step = (int)((double)max/NUM_POINTS_1);
+
+    Set<Integer> points = new HashSet<>();
+    for(int i=1; i<=max; i+=step){
+      points.add(i);
+    }
+
+    int lastp = max;
+
     int tmp = hdfsInotifyResultsSet.getMaxSeconds(clients);
     if(tmp > max){
       max = tmp;
     }
 
+    step = (int)((double)max/NUM_POINTS);
+
+    for(int i=lastp+step; i<=max; i+=step){
+      points.add(i);
+    }
+
+    points.add(epipeResults.getMaxSeconds(clients));
+    points.add(hdfsInotifyResultsSet.inotify_1k.getMaxSeconds(clients));
+    points.add(hdfsInotifyResultsSet.inotify_10k.getMaxSeconds(clients));
+    points.add(hdfsInotifyResultsSet.inotify_100k.getMaxSeconds(clients));
+
+    List<Integer> pointsList = new ArrayList<>(points);
+    Collections.sort(pointsList);
+
     BufferedWriter writer = Files.newBufferedWriter(Paths.get(baseDir,
         "lag_time_"+clients+"_clients.dat"));
     writer.write("#Time ePipe_avg_lag HDFS_Inotify_1k " +
         "HDFS_Inotify_10k HDFS_Inotify_100k\n");
-    for(int i=1; i<=max; i++){
-      writer.write(i + " " + epipeResults.getResult(clients, i) + " " +
-          hdfsInotifyResultsSet.getResult1K(clients, i) + " " +
-          hdfsInotifyResultsSet.getResult10K(clients, i) + " " +
-          hdfsInotifyResultsSet.getResult100K(clients, i) + "\n");
+
+    for(int p : pointsList){
+      writer.write(p + " " + epipeResults.getResult(clients, p) + " " +
+          hdfsInotifyResultsSet.getResult(clients, p) + "\n");
     }
 
     writer.close();
   }
+
 
   private ResultSet readePipeResults(Path epipeBaseDir) throws IOException {
     final ResultSet epipe = new ResultSet();
